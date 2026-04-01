@@ -313,63 +313,6 @@ Exemplo:
 
 Se entrar direto, sem pedir senha, está funcionando corretamente ✅
 
----
-
-## Estrutura do projeto no GitHub
-
-Uma estrutura simples e prática é esta:
-
-```text
-meuprojetoctl/
-├── meuprojetoctl
-├── README.md
-└── .gitignore
-```
-
-### Arquivo principal
-
-O arquivo `meuprojetoctl` deve conter o script Bash executável.
-
-### README.md
-
-O arquivo `README.md` deve conter este manual de uso e instalação.
-
-### .gitignore
-
-Se quiser, use algo simples como:
-
-```gitignore
-.DS_Store
-*.swp
-*.swo
-```
-
-## Como publicar no GitHub
-
-### 1. Crie um repositório vazio no GitHub
-
-Exemplo de nome:
-
-```text
-meuprojetoctl
-```
-
-### 2. Inicialize o Git no diretório do projeto
-
-```bash
-git init
-git add meuprojetoctl README.md .gitignore
-git commit -m "Initial commit: meuprojetoctl"
-```
-
-### 3. Conecte o repositório local ao GitHub
-
-```bash
-git remote add origin https://github.com/SEU_USUARIO/meuprojetoctl.git
-git branch -M main
-git push -u origin main
-```
-
 ## Como instalar depois em outro computador
 
 Quando for configurar em um novo Linux, o fluxo fica assim:
