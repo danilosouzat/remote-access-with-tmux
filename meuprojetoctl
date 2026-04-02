@@ -31,10 +31,10 @@ declare -A LOG_FILE=(
   [dev]="log/development.log"
 )
 
-info()    { echo "$*"; }
-success() { echo "OK: $*"; }
-warn()    { echo "Aviso: $*"; }
-error()   { echo "Erro: $*" >&2; }
+info()    { echo "$*" >&2; }
+success()  { echo "OK: $*" >&2; }
+warn()     { echo "Aviso: $*" >&2; }
+error()    { echo "Erro: $*" >&2; }
 
 die() {
   error "$*"
@@ -49,21 +49,29 @@ Uso:
   $CLI_NAME status [all|prod|staging|dev]
   $CLI_NAME new [prod|staging|dev]
   $CLI_NAME attach [prod|staging|dev]
-  $CLI_NAME console [prod|staging|dev]
-  $CLI_NAME log [prod|staging|dev]
-  $CLI_NAME shell [prod|staging|dev]
+
+  $CLI_NAME console [prod|staging|dev]   -> cria/abre uma sessão somente console
+  $CLI_NAME log [prod|staging|dev]       -> cria/abre uma sessão somente log
+  $CLI_NAME shell [prod|staging|dev]     -> cria/abre uma sessão somente shell
+
   $CLI_NAME clean [all|prod|staging|dev] [dias] [yes]
   $CLI_NAME completion
   $CLI_NAME help
 
 Atalhos rápidos:
-  $CLI_NAME prod     -> conectar na última sessão prod; se não existir, cria uma nova
-  $CLI_NAME staging  -> nova sessão staging
-  $CLI_NAME dev      -> nova sessão dev
+  $CLI_NAME prod     -> conectar na última sessão completa de prod; se não existir, cria uma nova
+  $CLI_NAME staging  -> nova sessão completa de staging
+  $CLI_NAME dev      -> nova sessão completa de dev
   $CLI_NAME list     -> listar sessões
   $CLI_NAME status   -> ver resumo de sessões
   $CLI_NAME menu     -> menu interativo
   $CLI_NAME clean all -> remover todas as sessões tmux criadas por esta ferramenta
+
+Sessões criadas:
+  $CLI_NAME new / $CLI_NAME prod   -> sessão completa (console + log + shell)
+  $CLI_NAME console               -> sessão somente console
+  $CLI_NAME log                   -> sessão somente log
+  $CLI_NAME shell                 -> sessão somente shell
 EOF
 }
 
@@ -72,23 +80,42 @@ valid_env() {
   [[ -n "${APP_DIR[$env]+x}" ]]
 }
 
-session_prefix() {
+session_name() {
   local env="$1"
-  printf '%s-%s-' "$PROJECT_NAME" "$env"
+  local kind="${2:-full}"
+  local ts
+  ts="$(date +%Y%m%d%H%M%S)"
+
+  case "$kind" in
+    full)    printf '%s-%s-%s' "$PROJECT_NAME" "$env" "$ts" ;;
+    console) printf '%s-%s-console-%s' "$PROJECT_NAME" "$env" "$ts" ;;
+    log)     printf '%s-%s-log-%s' "$PROJECT_NAME" "$env" "$ts" ;;
+    shell)   printf '%s-%s-shell-%s' "$PROJECT_NAME" "$env" "$ts" ;;
+    *) die "tipo de sessão inválido: $kind" ;;
+  esac
 }
 
-make_session_name() {
+session_regex() {
   local env="$1"
-  printf '%s-%s-%s' "$PROJECT_NAME" "$env" "$(date +%Y%m%d%H%M%S)"
-}
+  local kind="${2:-all}"
 
-pane_target() {
-  local focus="${1:-console}"
-  case "$focus" in
-    console) echo '.0' ;;
-    log) echo '.1' ;;
-    shell) echo '.2' ;;
-    *) die "painel inválido: $focus (use console|log|shell)" ;;
+  case "$kind" in
+    all)
+      printf '^%s-%s(-console|-log|-shell)?-[0-9]{14}$' "$PROJECT_NAME" "$env"
+      ;;
+    full)
+      printf '^%s-%s-[0-9]{14}$' "$PROJECT_NAME" "$env"
+      ;;
+    console)
+      printf '^%s-%s-console-[0-9]{14}$' "$PROJECT_NAME" "$env"
+      ;;
+    log)
+      printf '^%s-%s-log-[0-9]{14}$' "$PROJECT_NAME" "$env"
+      ;;
+    shell)
+      printf '^%s-%s-shell-[0-9]{14}$' "$PROJECT_NAME" "$env"
+      ;;
+    *) die "tipo de sessão inválido: $kind" ;;
   esac
 }
 
@@ -96,13 +123,13 @@ remote_list_output() {
   local env="${1:-all}"
 
   if [[ "$env" == "all" ]]; then
-    ssh -T "$REMOTE_HOST" "tmux list-sessions -F '#S|#{session_attached}' 2>/dev/null || true"
+    ssh -T "$REMOTE_HOST" "tmux list-sessions -F '#S|#{session_attached}' 2>/dev/null | grep '^$PROJECT_NAME-' || true"
     return 0
   fi
 
   valid_env "$env" || die "ambiente inválido: $env"
   local prefix
-  prefix="$(session_prefix "$env")"
+  prefix="$(session_name "$env" full | sed 's/[0-9][0-9]*$//')"
 
   ssh -T "$REMOTE_HOST" "tmux list-sessions -F '#S|#{session_attached}' 2>/dev/null | grep '^$prefix' || true"
 }
@@ -159,11 +186,12 @@ status() {
 
 latest_session() {
   local env="$1"
+  local kind="${2:-full}"
   valid_env "$env" || die "ambiente inválido: $env"
-  local prefix
-  prefix="$(session_prefix "$env")"
+  local regex
+  regex="$(session_regex "$env" "$kind")"
 
-  ssh -T "$REMOTE_HOST" "tmux list-sessions -F '#S' 2>/dev/null | grep '^$prefix' | sort | tail -n 1 || true"
+  ssh -T "$REMOTE_HOST" "tmux list-sessions -F '#S' 2>/dev/null | grep -E '$regex' | sort | tail -n 1 || true"
 }
 
 confirm_delete() {
@@ -199,11 +227,12 @@ clean_sessions() {
 
   if [[ "$env" == "all" ]]; then
     info "Removendo todas as sessões tmux do servidor..."
-    ssh -tt "$REMOTE_HOST" "bash -se" <<'REMOTE'
-set -euo pipefail
+    ssh -T "$REMOTE_HOST" "bash -s" <<'REMOTE'
+set -eo pipefail
 
 while IFS= read -r s; do
   [[ -z "$s" ]] && continue
+  [[ "$s" == meuprojeto-* ]] || continue
   tmux kill-session -t "$s"
   echo "removida: $s"
 done < <(tmux list-sessions -F '#S' 2>/dev/null || true)
@@ -213,15 +242,16 @@ REMOTE
   fi
 
   info "Removendo sessões antigas de '$env' com mais de $days dias..."
-  ssh -tt "$REMOTE_HOST" "TARGET_ENV='$env' DAYS='$days' bash -se" <<'REMOTE'
-set -euo pipefail
+  local regex
+  regex="$(session_regex "$env" all)"
+  ssh -T "$REMOTE_HOST" "TARGET_REGEX='$regex' DAYS='$days' bash -s" <<'REMOTE'
+set -eo pipefail
 
 cutoff=$(date -d "-$DAYS days" +%s)
 
 while IFS= read -r s; do
   [[ -z "$s" ]] && continue
-  [[ "$s" == meuprojeto-* ]] || continue
-  [[ "$s" == meuprojeto-$TARGET_ENV-* ]] || continue
+  [[ "$s" =~ $TARGET_REGEX ]] || continue
 
   ts="${s##*-}"
   [[ "$ts" =~ ^[0-9]{14}$ ]] || continue
@@ -235,47 +265,78 @@ while IFS= read -r s; do
   fi
 done < <(tmux list-sessions -F '#S' 2>/dev/null || true)
 REMOTE
-  success "Limpeza concluída."
+    success "Limpeza concluída."
+}
+
+create_session_detached() {
+  local env="$1"
+  local kind="$2"
+  local session="$3"
+
+  valid_env "$env" || die "ambiente inválido: $env"
+
+  local dir="${APP_DIR[$env]}"
+  local gemset="${GEMSET[$env]}"
+  local rails_env="${RAILS_ENV[$env]}"
+  local log_file="${LOG_FILE[$env]}"
+
+  ssh -T "$REMOTE_HOST" \
+    "SESSION='$session' DIR='$dir' GEMSET='$gemset' RAILS_ENV_NAME='$rails_env' LOG_FILE='$log_file' SESSION_KIND='$kind' bash -s" <<'REMOTE'
+set -eo pipefail
+
+if ! command -v tmux >/dev/null 2>&1; then
+  echo "tmux não encontrado no servidor" >&2
+  exit 1
+fi
+
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  exit 0
+fi
+
+case "$SESSION_KIND" in
+  full)
+    tmux new-session -d -s "$SESSION" -n console -c "$DIR" bash -lc "set +u; source ~/.rvm/scripts/rvm; rvm gemset use '$GEMSET' >/dev/null; export RAILS_ENV='$RAILS_ENV_NAME'; exec bundle exec rails c"
+    tmux split-window -h -t "$SESSION":0 -c "$DIR" bash -lc "exec tail -F '$LOG_FILE'"
+    tmux split-window -v -t "$SESSION":0.0 -c "$DIR" bash -lc "exec bash"
+    tmux select-layout -t "$SESSION":0 main-vertical
+    tmux select-pane -t "$SESSION":0.0
+    ;;
+  console)
+    tmux new-session -d -s "$SESSION" -n console -c "$DIR" bash -lc "set +u; source ~/.rvm/scripts/rvm; rvm gemset use '$GEMSET' >/dev/null; export RAILS_ENV='$RAILS_ENV_NAME'; exec bundle exec rails c"
+    ;;
+  log)
+    tmux new-session -d -s "$SESSION" -n log -c "$DIR" bash -lc "exec tail -F '$LOG_FILE'"
+    ;;
+  shell)
+    tmux new-session -d -s "$SESSION" -n shell -c "$DIR" bash -lc "exec bash"
+    ;;
+  *)
+    echo "Tipo de sessão inválido: $SESSION_KIND" >&2
+    exit 1
+    ;;
+esac
+REMOTE
+}
+
+attach_session() {
+  local session="$1"
+  ssh -tt "$REMOTE_HOST" "tmux attach -t '$session'"
 }
 
 new_session() {
   local env="${1:-prod}"
   valid_env "$env" || die "ambiente inválido: $env"
 
-  # limpeza automática antes de criar nova sessão, sem pedir confirmação
   clean_sessions "$env" "$DEFAULT_CLEAN_DAYS" yes >/dev/null || true
 
-  local session dir gemset rails_env log_file
-  session="$(make_session_name "$env")"
-  dir="${APP_DIR[$env]}"
-  gemset="${GEMSET[$env]}"
-  rails_env="${RAILS_ENV[$env]}"
-  log_file="${LOG_FILE[$env]}"
+  local session
+  session="$(session_name "$env" full)"
 
   info "Criando sessão: $session"
-
-  ssh -tt "$REMOTE_HOST" "SESSION='$session' DIR='$dir' GEMSET='$gemset' RAILS_ENV_NAME='$rails_env' LOG_FILE='$log_file' bash -se" <<'REMOTE'
-set -euo pipefail
-
-if tmux has-session -t "$SESSION" 2>/dev/null; then
-  echo "Sessão já existe: $SESSION"
-  tmux attach -t "$SESSION"
-  exit 0
-fi
-
-tmux new-session -d -s "$SESSION" -n console -c "$DIR" bash -lc "source ~/.rvm/scripts/rvm && rvm gemset use '$GEMSET' >/dev/null && export RAILS_ENV='$RAILS_ENV_NAME' && exec bundle exec rails c"
-tmux split-window -h -t "$SESSION":0 -c "$DIR" bash -lc "exec tail -F '$LOG_FILE'"
-tmux split-window -v -t "$SESSION":0.0 -c "$DIR" bash -lc "exec bash"
-tmux select-layout -t "$SESSION":0 main-vertical
-
-tmux select-pane -t "$SESSION":0.0
-printf '
-Sessão criada: %s
-' "$SESSION"
-REMOTE
+  create_session_detached "$env" full "$session"
 
   success "Conectando na sessão: $session"
-  ssh -tt "$REMOTE_HOST" "tmux attach -t '$session'"
+  attach_session "$session"
 }
 
 attach_latest() {
@@ -283,37 +344,69 @@ attach_latest() {
   valid_env "$env" || die "ambiente inválido: $env"
 
   local session
-  session="$(latest_session "$env")"
+  session="$(latest_session "$env" full)"
 
   if [[ -z "$session" ]]; then
+    session="$(session_name "$env" full)"
     warn "Nenhuma sessão encontrada para '$env'. Criando uma nova..."
-    new_session "$env"
-    return 0
+    create_session_detached "$env" full "$session"
   fi
 
   list_sessions "$env" || true
   echo
   success "Conectando na sessão: $session"
-  ssh -tt "$REMOTE_HOST" "tmux attach -t '$session'"
+  attach_session "$session"
 }
 
-attach_focus() {
+open_console() {
   local env="${1:-prod}"
-  local focus="${2:-console}"
   valid_env "$env" || die "ambiente inválido: $env"
 
-  local session pane
-  session="$(latest_session "$env")"
-  pane="$(pane_target "$focus")"
+  local session
+  session="$(latest_session "$env" console)"
 
   if [[ -z "$session" ]]; then
-    warn "Nenhuma sessão encontrada para '$env'. Criando uma nova..."
-    new_session "$env"
-    return 0
+    session="$(session_name "$env" console)"
+    info "Nenhuma sessão console encontrada para '$env'. Criando uma nova..."
+    create_session_detached "$env" console "$session"
   fi
 
-  info "Conectando em '$session' com foco em: $focus"
-  ssh -tt "$REMOTE_HOST" "tmux select-pane -t '$session:0$pane' 2>/dev/null || true; tmux attach -t '$session'"
+  success "Abrindo console Rails em: $session"
+  attach_session "$session"
+}
+
+open_log() {
+  local env="${1:-prod}"
+  valid_env "$env" || die "ambiente inválido: $env"
+
+  local session
+  session="$(latest_session "$env" log)"
+
+  if [[ -z "$session" ]]; then
+    session="$(session_name "$env" log)"
+    info "Nenhuma sessão de log encontrada para '$env'. Criando uma nova..."
+    create_session_detached "$env" log "$session"
+  fi
+
+  success "Abrindo log em tempo real em: $session"
+  attach_session "$session"
+}
+
+open_shell() {
+  local env="${1:-prod}"
+  valid_env "$env" || die "ambiente inválido: $env"
+
+  local session
+  session="$(latest_session "$env" shell)"
+
+  if [[ -z "$session" ]]; then
+    session="$(session_name "$env" shell)"
+    info "Nenhuma sessão shell encontrada para '$env'. Criando uma nova..."
+    create_session_detached "$env" shell "$session"
+  fi
+
+  success "Abrindo shell em: $session"
+  attach_session "$session"
 }
 
 menu() {
@@ -337,11 +430,11 @@ menu() {
 
   echo
   echo "Ações disponíveis para '$env':"
-  echo "  1) nova sessão completa (Rails console + log + shell)"
-  echo "  2) conectar na última sessão"
-  echo "  3) abrir Rails console"
-  echo "  4) abrir log em tempo real"
-  echo "  5) abrir shell do projeto"
+  echo "  1) nova sessão completa (console + log + shell)"
+  echo "  2) conectar na última sessão completa"
+  echo "  3) abrir console Rails"
+  echo "  4) ver log em tempo real"
+  echo "  5) abrir shell"
   echo "  6) ver status"
   echo "  7) listar sessões"
   echo "  8) limpar sessões antigas"
@@ -352,9 +445,9 @@ menu() {
   case "$action_choice" in
     1) new_session "$env" ;;
     2) attach_latest "$env" ;;
-    3) attach_focus "$env" console ;;
-    4) attach_focus "$env" log ;;
-    5) attach_focus "$env" shell ;;
+    3) open_console "$env" ;;
+    4) open_log "$env" ;;
+    5) open_shell "$env" ;;
     6) status "$env" ;;
     7) list_sessions "$env" ;;
     8) clean_sessions "$env" "$DEFAULT_CLEAN_DAYS" ;;
@@ -374,7 +467,6 @@ _${CLI_NAME}_complete() {
 
   local commands="menu list status new attach console log shell clean completion help prod staging dev p s d o l m"
   local envs="all prod staging dev yes"
-  local focuses="console log shell"
 
   if [[ \$COMP_CWORD -eq 1 ]]; then
     COMPREPLY=( \$(compgen -W "\$commands" -- "\$cur") )
@@ -414,13 +506,13 @@ case "${1:-menu}" in
     attach_latest "${2:-prod}"
     ;;
   console)
-    attach_focus "${2:-prod}" console
+    open_console "${2:-prod}"
     ;;
   log)
-    attach_focus "${2:-prod}" log
+    open_log "${2:-prod}"
     ;;
   shell)
-    attach_focus "${2:-prod}" shell
+    open_shell "${2:-prod}"
     ;;
   clean)
     clean_sessions "${2:-all}" "${3:-$DEFAULT_CLEAN_DAYS}" "${4:-no}"

@@ -24,12 +24,16 @@ echo "✅ Dependências OK"
 # Baixa script principal do GitHub
 echo "⬇️ Baixando $CLI_NAME..."
 
-curl -fsSL https://github.com/danilosouzat/remote-access-with-tmux.git -o "$INSTALL_PATH"
+curl -fsSL https://github.com/danilosouzat/remote-access-with-tmux/blob/main/meuprojetoctl -o "$INSTALL_PATH"
+
+echo "============================================================"
 
 # Permissão de execução
 chmod +x "$INSTALL_PATH"
 
 echo "✅ Instalado em $INSTALL_PATH"
+
+echo "============================================================"
 
 # Instalar autocomplete
 echo "⚙️ Instalando autocomplete..."
@@ -39,6 +43,19 @@ COMPLETION_SCRIPT="$($CLI_NAME completion)"
 echo "$COMPLETION_SCRIPT" > /etc/bash_completion.d/$CLI_NAME
 
 echo "✅ Autocomplete configurado"
+
+echo "============================================================"
+
+echo "Agora, vou verificar se o tmux está instaldo!"
+
+if ! command -v tmux >/dev/null; then
+  echo "📦 Instalando tmux..."
+  apt update && apt install -y tmux
+else
+  echo "✅ tmux já está instalado!"
+fi
+
+echo "============================================================"
 
 # Final
 echo

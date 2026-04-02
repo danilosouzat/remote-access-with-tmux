@@ -145,11 +145,12 @@ meuprojetoctl shell prod
 ```
 
 
-O que cada um faz
+O que cada um faz:
 
-`log prod` => abre a última sessão de produção com foco no painel do log.
-`console prod` => abre a última sessão de produção com foco no Rails console.
-`shell prod` =>  abre a última sessão de produção com foco no shell do projeto.
+`auditctl new` / `auditctl prod` →  abre uma sessão completa com 3 painéis: console + log + shell
+`auditctl console` / `auditctl console prod` → abre uma sessão só com Rails console
+`auditctl log` → sessão só com log em tempo real
+`auditctl shell` → sessão só com shell
 
 
 ### Limpar todas as sessões
@@ -234,10 +235,18 @@ ssh ubuntu@SEU_IP_OU_HOST "tmux -V"
 
 ## Instalação em um novo computador Linux
 
+### Instalação via linha de comando
+
+Abra o terminal e execute
+
+`curl -fsSL https://github.com/danilosouzat/remote-access-with-tmux/blob/main/install.sh | sudo bash`
+
+### Instação manual(passo a passo):
+
 ### 1. Baixe o projeto do GitHub
 
 ```bash
-git clone https://github.com/SEU_USUARIO/meuprojetoctl.git
+git clone https://github.com/danilosouzat/remote-access-with-tmux.git
 cd meuprojetoctl
 ```
 
